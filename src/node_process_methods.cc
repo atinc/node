@@ -172,13 +172,19 @@ static void Kill(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(err);
 }
 
-static void MemoryUsage(const FunctionCallbackInfo<Value>& args) {
+static void Rss(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
   size_t rss;
   int err = uv_resident_set_memory(&rss);
   if (err)
     return env->ThrowUVException(err, "uv_resident_set_memory");
+
+  args.GetReturnValue().Set(static_cast<double>(rss));
+}
+
+static void MemoryUsage(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
 
   Isolate* isolate = env->isolate();
   // V8 memory usage
@@ -192,12 +198,19 @@ static void MemoryUsage(const FunctionCallbackInfo<Value>& args) {
   Local<ArrayBuffer> ab = get_fields_array_buffer(args, 0, 5);
   double* fields = static_cast<double*>(ab->GetBackingStore()->Data());
 
-  fields[0] = rss;
-  fields[1] = v8_heap_stats.total_heap_size();
-  fields[2] = v8_heap_stats.used_heap_size();
-  fields[3] = v8_heap_stats.external_memory();
-  fields[4] = array_buffer_allocator == nullptr ?
-      0 : array_buffer_allocator->total_mem_usage();
+  size_t rss;
+  int err = uv_resident_set_memory(&rss);
+  if (err)
+    return env->ThrowUVException(err, "uv_resident_set_memory");
+
+  fields[0] = static_cast<double>(rss);
+  fields[1] = static_cast<double>(v8_heap_stats.total_heap_size());
+  fields[2] = static_cast<double>(v8_heap_stats.used_heap_size());
+  fields[3] = static_cast<double>(v8_heap_stats.external_memory());
+  fields[4] =
+      array_buffer_allocator == nullptr
+          ? 0
+          : static_cast<double>(array_buffer_allocator->total_mem_usage());
 }
 
 void RawDebug(const FunctionCallbackInfo<Value>& args) {
@@ -280,20 +293,20 @@ static void ResourceUsage(const FunctionCallbackInfo<Value>& args) {
 
   fields[0] = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
   fields[1] = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
-  fields[2] = rusage.ru_maxrss;
-  fields[3] = rusage.ru_ixrss;
-  fields[4] = rusage.ru_idrss;
-  fields[5] = rusage.ru_isrss;
-  fields[6] = rusage.ru_minflt;
-  fields[7] = rusage.ru_majflt;
-  fields[8] = rusage.ru_nswap;
-  fields[9] = rusage.ru_inblock;
-  fields[10] = rusage.ru_oublock;
-  fields[11] = rusage.ru_msgsnd;
-  fields[12] = rusage.ru_msgrcv;
-  fields[13] = rusage.ru_nsignals;
-  fields[14] = rusage.ru_nvcsw;
-  fields[15] = rusage.ru_nivcsw;
+  fields[2] = static_cast<double>(rusage.ru_maxrss);
+  fields[3] = static_cast<double>(rusage.ru_ixrss);
+  fields[4] = static_cast<double>(rusage.ru_idrss);
+  fields[5] = static_cast<double>(rusage.ru_isrss);
+  fields[6] = static_cast<double>(rusage.ru_minflt);
+  fields[7] = static_cast<double>(rusage.ru_majflt);
+  fields[8] = static_cast<double>(rusage.ru_nswap);
+  fields[9] = static_cast<double>(rusage.ru_inblock);
+  fields[10] = static_cast<double>(rusage.ru_oublock);
+  fields[11] = static_cast<double>(rusage.ru_msgsnd);
+  fields[12] = static_cast<double>(rusage.ru_msgrcv);
+  fields[13] = static_cast<double>(rusage.ru_nsignals);
+  fields[14] = static_cast<double>(rusage.ru_nvcsw);
+  fields[15] = static_cast<double>(rusage.ru_nivcsw);
 }
 
 #ifdef __POSIX__
@@ -344,7 +357,7 @@ static void DebugProcess(const FunctionCallbackInfo<Value>& args) {
   });
 
   CHECK(args[0]->IsNumber());
-  pid = args[0].As<Integer>()->Value();
+  pid = static_cast<DWORD>(args[0].As<Integer>()->Value());
 
   process =
       OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
@@ -542,6 +555,7 @@ static void InitializeProcessMethods(Local<Object> target,
   env->SetMethod(target, "umask", Umask);
   env->SetMethod(target, "_rawDebug", RawDebug);
   env->SetMethod(target, "memoryUsage", MemoryUsage);
+  env->SetMethod(target, "rss", Rss);
   env->SetMethod(target, "cpuUsage", CPUUsage);
   env->SetMethod(target, "resourceUsage", ResourceUsage);
 
@@ -568,6 +582,7 @@ void RegisterProcessMethodsExternalReferences(
   registry->Register(Umask);
   registry->Register(RawDebug);
   registry->Register(MemoryUsage);
+  registry->Register(Rss);
   registry->Register(CPUUsage);
   registry->Register(ResourceUsage);
 

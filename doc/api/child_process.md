@@ -146,6 +146,9 @@ exec('"my script.cmd" a b', (err, stdout, stderr) => {
 <!-- YAML
 added: v0.1.90
 changes:
+  - version: v15.4.0
+    pr-url: https://github.com/nodejs/node/pull/36308
+    description: AbortSignal support was added.
   - version: v8.8.0
     pr-url: https://github.com/nodejs/node/pull/15380
     description: The `windowsHide` option is supported now.
@@ -154,12 +157,14 @@ changes:
 * `command` {string} The command to run, with space-separated arguments.
 * `options` {Object}
   * `cwd` {string} Current working directory of the child process.
-    **Default:** `null`.
+    **Default:** `process.cwd()`.
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
   * `encoding` {string} **Default:** `'utf8'`
   * `shell` {string} Shell to execute the command with. See
     [Shell requirements][] and [Default Windows shell][]. **Default:**
     `'/bin/sh'` on Unix, `process.env.ComSpec` on Windows.
+  * `signal` {AbortSignal} allows aborting the child process using an
+    AbortSignal.
   * `timeout` {number} **Default:** `0`
   * `maxBuffer` {number} Largest amount of data in bytes allowed on stdout or
     stderr. If exceeded, the child process is terminated and any output is
@@ -183,6 +188,8 @@ directly by the shell and special characters (vary based on
 need to be dealt with accordingly:
 
 ```js
+const { exec } = require('child_process');
+
 exec('"/path/to/test file/test.sh" arg1 arg2');
 // Double quotes are used so that the space in the path is not interpreted as
 // a delimiter of multiple arguments.
@@ -246,6 +253,20 @@ async function lsExample() {
 lsExample();
 ```
 
+If the `signal` option is enabled, calling `.abort()` on the corresponding
+`AbortController` is similar to calling `.kill()` on the child process except
+the error passed to the callback will be an `AbortError`:
+
+```js
+const { exec } = require('child_process');
+const controller = new AbortController();
+const { signal } = controller;
+const child = exec('grep ssh', { signal }, (error) => {
+  console.log(error); // an AbortError
+});
+controller.abort();
+```
+
 ### `child_process.execFile(file[, args][, options][, callback])`
 <!-- YAML
 added: v0.1.91
@@ -280,7 +301,8 @@ changes:
     `'/bin/sh'` on Unix, and `process.env.ComSpec` on Windows. A different
     shell can be specified as a string. See [Shell requirements][] and
     [Default Windows shell][]. **Default:** `false` (no shell).
-  * `signal` {AbortSignal} allows aborting the execFile using an AbortSignal.
+  * `signal` {AbortSignal} allows aborting the child process using an
+    AbortSignal.
 * `callback` {Function} Called with the output when process terminates.
   * `error` {Error}
   * `stdout` {string|Buffer}
@@ -339,6 +361,7 @@ If the `signal` option is enabled, calling `.abort()` on the corresponding
 the error passed to the callback will be an `AbortError`:
 
 ```js
+const { execFile } = require('child_process');
 const controller = new AbortController();
 const { signal } = controller;
 const child = execFile('node', ['--version'], { signal }, (error) => {
@@ -351,6 +374,15 @@ controller.abort();
 <!-- YAML
 added: v0.5.0
 changes:
+  - version: v15.13.0
+    pr-url: https://github.com/nodejs/node/pull/37256
+    description: timeout was added.
+  - version: v15.11.0
+    pr-url: https://github.com/nodejs/node/pull/37325
+    description: killSignal for AbortSignal was added.
+  - version: v15.6.0
+    pr-url: https://github.com/nodejs/node/pull/36603
+    description: AbortSignal support was added.
   - version:
       - v13.2.0
       - v12.16.0
@@ -375,9 +407,14 @@ changes:
   * `execPath` {string} Executable used to create the child process.
   * `execArgv` {string[]} List of string arguments passed to the executable.
     **Default:** `process.execArgv`.
+  * `gid` {number} Sets the group identity of the process (see setgid(2)).
   * `serialization` {string} Specify the kind of serialization used for sending
     messages between processes. Possible values are `'json'` and `'advanced'`.
     See [Advanced serialization][] for more details. **Default:** `'json'`.
+  * `signal` {AbortSignal} Allows closing the child process using an
+    AbortSignal.
+  * `killSignal` {string|integer} The signal value to be used when the spawned
+    process will be killed by timeout or abort signal. **Default:** `'SIGTERM'`.
   * `silent` {boolean} If `true`, stdin, stdout, and stderr of the child will be
     piped to the parent, otherwise they will be inherited from the parent, see
     the `'pipe'` and `'inherit'` options for [`child_process.spawn()`][]'s
@@ -386,10 +423,11 @@ changes:
     When this option is provided, it overrides `silent`. If the array variant
     is used, it must contain exactly one item with value `'ipc'` or an error
     will be thrown. For instance `[0, 1, 2, 'ipc']`.
+  * `uid` {number} Sets the user identity of the process (see setuid(2)).
   * `windowsVerbatimArguments` {boolean} No quoting or escaping of arguments is
     done on Windows. Ignored on Unix. **Default:** `false`.
-  * `uid` {number} Sets the user identity of the process (see setuid(2)).
-  * `gid` {number} Sets the group identity of the process (see setgid(2)).
+  * `timeout` {number} In milliseconds the maximum amount of time the process
+    is allowed to run. **Default:** `undefined`.
 * Returns: {ChildProcess}
 
 The `child_process.fork()` method is a special case of
@@ -420,10 +458,37 @@ current process.
 The `shell` option available in [`child_process.spawn()`][] is not supported by
 `child_process.fork()` and will be ignored if set.
 
+If the `signal` option is enabled, calling `.abort()` on the corresponding
+`AbortController` is similar to calling `.kill()` on the child process except
+the error passed to the callback will be an `AbortError`:
+
+```js
+if (process.argv[2] === 'child') {
+  setTimeout(() => {
+    console.log(`Hello from ${process.argv[2]}!`);
+  }, 1_000);
+} else {
+  const { fork } = require('child_process');
+  const controller = new AbortController();
+  const { signal } = controller;
+  const child = fork(__filename, ['child'], { signal });
+  child.on('error', (err) => {
+    // This will be called with err being an AbortError if the controller aborts
+  });
+  controller.abort(); // Stops the child process
+}
+```
+
 ### `child_process.spawn(command[, args][, options])`
 <!-- YAML
 added: v0.1.90
 changes:
+  - version: v15.13.0
+    pr-url: https://github.com/nodejs/node/pull/37256
+    description: timeout was added.
+  - version: v15.11.0
+    pr-url: https://github.com/nodejs/node/pull/37325
+    description: killSignal for AbortSignal was added.
   - version: v15.5.0
     pr-url: https://github.com/nodejs/node/pull/36432
     description: AbortSignal support was added.
@@ -469,7 +534,12 @@ changes:
     when `shell` is specified and is CMD. **Default:** `false`.
   * `windowsHide` {boolean} Hide the subprocess console window that would
     normally be created on Windows systems. **Default:** `false`.
-  * `signal` {AbortSignal} allows aborting the execFile using an AbortSignal.
+  * `signal` {AbortSignal} allows aborting the child process using an
+    AbortSignal.
+  * `timeout` {number} In milliseconds the maximum amount of time the process
+    is allowed to run. **Default:** `undefined`.
+  * `killSignal` {string|integer} The signal value to be used when the spawned
+    process will be killed by timeout or abort signal. **Default:** `'SIGTERM'`.
 
 * Returns: {ChildProcess}
 
@@ -582,13 +652,14 @@ If the `signal` option is enabled, calling `.abort()` on the corresponding
 the error passed to the callback will be an `AbortError`:
 
 ```js
+const { spawn } = require('child_process');
 const controller = new AbortController();
 const { signal } = controller;
 const grep = spawn('grep', ['ssh'], { signal });
 grep.on('error', (err) => {
   // This will be called with err being an AbortError if the controller aborts
 });
-controller.abort(); // stops the process
+controller.abort(); // Stops the child process
 ```
 
 #### `options.detached`
@@ -653,6 +724,9 @@ subprocess.unref();
 <!-- YAML
 added: v0.7.10
 changes:
+  - version: v15.6.0
+    pr-url: https://github.com/nodejs/node/pull/29412
+    description: Added the `overlapped` stdio flag.
   - version: v3.3.1
     pr-url: https://github.com/nodejs/node/pull/2727
     description: The value `0` is now accepted as a file descriptor.
@@ -668,6 +742,7 @@ equal to `['pipe', 'pipe', 'pipe']`.
 For convenience, `options.stdio` may be one of the following strings:
 
 * `'pipe'`: equivalent to `['pipe', 'pipe', 'pipe']` (the default)
+* `'overlapped'`: equivalent to `['overlapped', 'overlapped', 'overlapped']`
 * `'ignore'`: equivalent to `['ignore', 'ignore', 'ignore']`
 * `'inherit'`: equivalent to `['inherit', 'inherit', 'inherit']` or `[0, 1, 2]`
 
@@ -681,7 +756,13 @@ pipes between the parent and child. The value is one of the following:
    `child_process` object as [`subprocess.stdio[fd]`][`subprocess.stdio`]. Pipes
    created for fds 0, 1, and 2 are also available as [`subprocess.stdin`][],
    [`subprocess.stdout`][] and [`subprocess.stderr`][], respectively.
-2. `'ipc'`: Create an IPC channel for passing messages/file descriptors
+1. `'overlapped'`: Same as `'pipe'` except that the `FILE_FLAG_OVERLAPPED` flag
+   is set on the handle. This is necessary for overlapped I/O on the child
+   process's stdio handles. See the
+   [docs](https://docs.microsoft.com/en-us/windows/win32/fileio/synchronous-and-asynchronous-i-o)
+   for more details. This is exactly the same as `'pipe'` on non-Windows
+   systems.
+1. `'ipc'`: Create an IPC channel for passing messages/file descriptors
    between parent and child. A [`ChildProcess`][] may have at most one IPC
    stdio file descriptor. Setting this option enables the
    [`subprocess.send()`][] method. If the child is a Node.js process, the
@@ -692,25 +773,25 @@ pipes between the parent and child. The value is one of the following:
    Accessing the IPC channel fd in any way other than [`process.send()`][]
    or using the IPC channel with a child process that is not a Node.js instance
    is not supported.
-3. `'ignore'`: Instructs Node.js to ignore the fd in the child. While Node.js
+1. `'ignore'`: Instructs Node.js to ignore the fd in the child. While Node.js
    will always open fds 0, 1, and 2 for the processes it spawns, setting the fd
    to `'ignore'` will cause Node.js to open `/dev/null` and attach it to the
    child's fd.
-4. `'inherit'`: Pass through the corresponding stdio stream to/from the
+1. `'inherit'`: Pass through the corresponding stdio stream to/from the
    parent process. In the first three positions, this is equivalent to
    `process.stdin`, `process.stdout`, and `process.stderr`, respectively. In
    any other position, equivalent to `'ignore'`.
-5. {Stream} object: Share a readable or writable stream that refers to a tty,
+1. {Stream} object: Share a readable or writable stream that refers to a tty,
    file, socket, or a pipe with the child process. The stream's underlying
    file descriptor is duplicated in the child process to the fd that
    corresponds to the index in the `stdio` array. The stream must have an
    underlying descriptor (file streams do not until the `'open'` event has
    occurred).
-6. Positive integer: The integer value is interpreted as a file descriptor
+1. Positive integer: The integer value is interpreted as a file descriptor
    that is currently open in the parent process. It is shared with the child
    process, similar to how {Stream} objects can be shared. Passing sockets
    is not supported on Windows.
-7. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
+1. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
    words, stdin, stdout, and stderr) a pipe is created. For fd 3 and up, the
    default is `'ignore'`.
 
@@ -984,9 +1065,11 @@ added: v0.7.7
 * `code` {number} The exit code if the child exited on its own.
 * `signal` {string} The signal by which the child process was terminated.
 
-The `'close'` event is emitted when the stdio streams of a child process have
-been closed. This is distinct from the [`'exit'`][] event, since multiple
-processes might share the same stdio streams.
+The `'close'` event is emitted after a process has ended _and_ the stdio
+streams of a child process have been closed. This is distinct from the
+[`'exit'`][] event, since multiple processes might share the same stdio
+streams. The `'close'` event will always emit after [`'exit'`][] was
+already emitted, or [`'error'`][] if the child failed to spawn.
 
 ```js
 const { spawn } = require('child_process');
@@ -1081,6 +1164,8 @@ added: v15.1.0
 -->
 
 The `'spawn'` event is emitted once the child process has spawned successfully.
+If the child process does not spawn successfully, the `'spawn'` event is not
+emitted and the `'error'` event is emitted instead.
 
 If emitted, the `'spawn'` event comes before all other events and before any
 data is received via `stdout` or `stderr`.
@@ -1194,6 +1279,11 @@ may not actually terminate the process.
 
 See kill(2) for reference.
 
+On Windows, where POSIX signals do not exist, the `signal` argument will be
+ignored, and the process will be killed forcefully and abruptly (similar to
+`'SIGKILL'`).
+See [Signal Events][] for more details.
+
 On Linux, child processes of child processes will not be terminated
 when attempting to kill their parent. This is likely to happen when running a
 new process in a shell or with the use of the `shell` option of `ChildProcess`:
@@ -1208,7 +1298,7 @@ const subprocess = spawn(
     '-c',
     `node -e "setInterval(() => {
       console.log(process.pid, 'is alive')
-    }, 500);"`
+    }, 500);"`,
   ], {
     stdio: ['inherit', 'inherit', 'inherit']
   }
@@ -1236,9 +1326,11 @@ does not indicate that the child process has been terminated.
 added: v0.1.90
 -->
 
-* {integer}
+* {integer|undefined}
 
-Returns the process identifier (PID) of the child process.
+Returns the process identifier (PID) of the child process. If the child process
+fails to spawn due to errors, then the value is `undefined` and `error` is
+emitted.
 
 ```js
 const { spawn } = require('child_process');
@@ -1491,6 +1583,9 @@ then this will be `null`.
 `subprocess.stderr` is an alias for `subprocess.stdio[2]`. Both properties will
 refer to the same value.
 
+The `subprocess.stderr` property can be `null` if the child process could
+not be successfully spawned.
+
 ### `subprocess.stdin`
 <!-- YAML
 added: v0.1.90
@@ -1508,6 +1603,9 @@ then this will be `null`.
 
 `subprocess.stdin` is an alias for `subprocess.stdio[0]`. Both properties will
 refer to the same value.
+
+The `subprocess.stdin` property can be `undefined` if the child process could
+not be successfully spawned.
 
 ### `subprocess.stdio`
 <!-- YAML
@@ -1535,7 +1633,7 @@ const subprocess = child_process.spawn('ls', {
   stdio: [
     0, // Use parent's stdin for child.
     'pipe', // Pipe child's stdout to parent.
-    fs.openSync('err.out', 'w') // Direct child's stderr to a file.
+    fs.openSync('err.out', 'w'), // Direct child's stderr to a file.
   ]
 });
 
@@ -1548,6 +1646,9 @@ assert.strictEqual(subprocess.stdio[1], subprocess.stdout);
 assert.strictEqual(subprocess.stdio[2], null);
 assert.strictEqual(subprocess.stdio[2], subprocess.stderr);
 ```
+
+The `subprocess.stdio` property can be `undefined` if the child process could
+not be successfully spawned.
 
 ### `subprocess.stdout`
 <!-- YAML
@@ -1573,6 +1674,9 @@ subprocess.stdout.on('data', (data) => {
   console.log(`Received chunk ${data}`);
 });
 ```
+
+The `subprocess.stdout` property can be `null` if the child process could
+not be successfully spawned.
 
 ### `subprocess.unref()`
 <!-- YAML
@@ -1644,11 +1748,12 @@ or [`child_process.fork()`][].
 [Default Windows shell]: #child_process_default_windows_shell
 [HTML structured clone algorithm]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
 [Shell requirements]: #child_process_shell_requirements
+[Signal Events]: process.md#process_signal_events
 [`'disconnect'`]: process.md#process_event_disconnect
 [`'error'`]: #child_process_event_error
 [`'exit'`]: #child_process_event_exit
 [`'message'`]: process.md#process_event_message
-[`ChildProcess`]: #child_process_child_process
+[`ChildProcess`]: #child_process_class_childprocess
 [`Error`]: errors.md#errors_class_error
 [`EventEmitter`]: events.md#events_class_eventemitter
 [`child_process.exec()`]: #child_process_child_process_exec_command_options_callback

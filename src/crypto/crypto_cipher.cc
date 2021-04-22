@@ -265,10 +265,7 @@ void CipherBase::Initialize(Environment* env, Local<Object> target) {
   env->SetProtoMethodNoSideEffect(t, "getAuthTag", GetAuthTag);
   env->SetProtoMethod(t, "setAuthTag", SetAuthTag);
   env->SetProtoMethod(t, "setAAD", SetAAD);
-
-  target->Set(env->context(),
-              FIXED_ONE_BYTE_STRING(env->isolate(), "CipherBase"),
-              t->GetFunction(env->context()).ToLocalChecked()).Check();
+  env->SetConstructorFunction(target, "CipherBase", t);
 
   env->SetMethodNoSideEffect(target, "getSSLCiphers", GetSSLCiphers);
   env->SetMethodNoSideEffect(target, "getCiphers", GetCiphers);
@@ -345,13 +342,14 @@ void CipherBase::Init(const char* cipher_type,
                       unsigned int auth_tag_len) {
   HandleScope scope(env()->isolate());
   MarkPopErrorOnReturn mark_pop_error_on_return;
-
-#ifdef NODE_FIPS_MODE
+#if OPENSSL_VERSION_MAJOR >= 3
+  if (EVP_default_properties_is_fips_enabled(nullptr)) {
+#else
   if (FIPS_mode()) {
+#endif
     return THROW_ERR_CRYPTO_UNSUPPORTED_OPERATION(env(),
         "crypto.createCipher() is not supported in FIPS mode.");
   }
-#endif  // NODE_FIPS_MODE
 
   const EVP_CIPHER* const cipher = EVP_get_cipherbyname(cipher_type);
   if (cipher == nullptr)
@@ -531,14 +529,18 @@ bool CipherBase::InitAuthenticated(
       return false;
     }
 
-#ifdef NODE_FIPS_MODE
     // TODO(tniessen) Support CCM decryption in FIPS mode
+
+#if OPENSSL_VERSION_MAJOR >= 3
+    if (mode == EVP_CIPH_CCM_MODE && kind_ == kDecipher &&
+        EVP_default_properties_is_fips_enabled(nullptr)) {
+#else
     if (mode == EVP_CIPH_CCM_MODE && kind_ == kDecipher && FIPS_mode()) {
+#endif
       THROW_ERR_CRYPTO_UNSUPPORTED_OPERATION(env(),
           "CCM encryption not supported in FIPS mode");
       return false;
     }
-#endif
 
     // Tell OpenSSL about the desired length.
     if (!EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_SET_TAG, auth_tag_len,
@@ -842,9 +844,9 @@ bool CipherBase::Final(AllocatedBuffer* out) {
         CHECK(mode == EVP_CIPH_GCM_MODE);
         auth_tag_len_ = sizeof(auth_tag_);
       }
-      CHECK_EQ(1, EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_GET_TAG,
-                      auth_tag_len_,
-                      reinterpret_cast<unsigned char*>(auth_tag_)));
+      ok = (1 == EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_GET_TAG,
+                     auth_tag_len_,
+                     reinterpret_cast<unsigned char*>(auth_tag_)));
     }
   }
 
